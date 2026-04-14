@@ -202,7 +202,6 @@ export default function App() {
   const [simId, setSimId] = useState(null);
   const [mapHover, setMapHover] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
-  const [newProp, setNewProp] = useState({ kind:"new",dev:"mitsubishi",name:"",area:"",line:"",station:"",walk:5,pMin:0,pMax:0,sqm:70,tsubo:"",delivery:"",status:"予告",tags:"",memo:"",lat:"",lng:"" });
   const [notifs, setNotifs] = useState([]);
 
   // ── 起動時ロード ──
@@ -260,11 +259,6 @@ export default function App() {
     return {...p,status:val};
   }));
   const saveMemo = () => { setProperties(prev=>prev.map(p=>p.id===editMemo?{...p,memo:memoText}:p)); setEditMemo(null); };
-  const addProp = () => {
-    setProperties(prev=>[...prev,{...newProp,id:Date.now(),watch:false,notify:false,walk:+newProp.walk,pMin:+newProp.pMin,pMax:+newProp.pMax,sqm:+newProp.sqm,tsubo:newProp.tsubo?+newProp.tsubo:null,lat:+newProp.lat||35.7,lng:+newProp.lng||139.7,tags:newProp.tags.split(/[,、]/).map(t=>t.trim()).filter(Boolean)}]);
-    setShowAdd(false);
-    setNewProp({kind:"new",dev:"mitsubishi",name:"",area:"",line:"",station:"",walk:5,pMin:0,pMax:0,sqm:70,tsubo:"",delivery:"",status:"予告",tags:"",memo:"",lat:"",lng:""});
-  };
 
   const sel = selected ? properties.find(p=>p.id===selected) : null;
   const selDev = sel ? DEVS.find(d=>d.id===sel.dev) : null;
