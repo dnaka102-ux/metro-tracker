@@ -607,25 +607,15 @@ export default function App() {
 
       {/* ── Add Sheet ── */}
       {showAdd&&(
-        <Sheet onClose={()=>setShowAdd(false)} title="物件を追加">
-          <div style={{display:"grid",gap:"10px"}}>
-            {[{l:"種別",k:"kind",t:"sel",opts:[{v:"new",l:"新築"},{v:"used",l:"中古"}]},{l:"デベロッパー",k:"dev",t:"sel",opts:DEVS.map(d=>({v:d.id,l:d.short+" "+d.brand}))},{l:"物件名",k:"name",t:"text"},{l:"エリア",k:"area",t:"text"},{l:"路線",k:"line",t:"text"},{l:"駅名",k:"station",t:"text"},{l:"徒歩（分）",k:"walk",t:"number"},{l:"最低価格（万円）",k:"pMin",t:"number"},{l:"最高価格（万円）",k:"pMax",t:"number"},{l:"専有面積（㎡）",k:"sqm",t:"number"},{l:"坪単価（万円・任意）",k:"tsubo",t:"number"},{l:"竣工・引渡",k:"delivery",t:"text"},{l:"ステータス",k:"status",t:"sel",opts:STATUSES.map(s=>({v:s,l:s}))},{l:"タグ（カンマ区切り）",k:"tags",t:"text"},{l:"メモ（任意）",k:"memo",t:"text"}].map(f=>(
-              <div key={f.k}>
-                <div style={{fontSize:"11px",color:P.muted,marginBottom:"4px"}}>{f.l}</div>
-                {f.t==="sel"
-                  ?<select value={newProp[f.k]} onChange={e=>setNewProp(p=>({...p,[f.k]:e.target.value}))} style={{width:"100%",background:P.card,border:`1px solid ${P.border2}`,borderRadius:"8px",padding:"9px 11px",color:P.text,fontSize:"13px",outline:"none"}}>
-                    {f.opts.map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
-                  </select>
-                  :<input type={f.t} value={newProp[f.k]} onChange={e=>setNewProp(p=>({...p,[f.k]:e.target.value}))} style={{width:"100%",background:P.card,border:`1px solid ${P.border2}`,borderRadius:"8px",padding:"9px 11px",color:P.text,fontSize:"13px",outline:"none",boxSizing:"border-box"}}/>
-                }
-              </div>
-            ))}
-          </div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"8px",marginTop:"16px"}}>
-            <button onClick={()=>setShowAdd(false)} style={{background:P.card,border:`1px solid ${P.border2}`,borderRadius:"10px",padding:"12px",color:P.sub,cursor:"pointer",fontSize:"13px"}}>キャンセル</button>
-            <button onClick={addProp} disabled={!newProp.name} style={{background:newProp.name?`linear-gradient(135deg,${P.gold},${P.goldDim})`:"#1E2535",border:"none",borderRadius:"10px",padding:"12px",color:newProp.name?"#07080C":P.muted,cursor:newProp.name?"pointer":"not-allowed",fontSize:"13px",fontWeight:"700"}}>追加する</button>
-          </div>
-        </Sheet>
+        <AddSheet
+          onClose={()=>setShowAdd(false)}
+          onAdd={(prop)=>{ setProperties(prev=>[...prev,prop]); setShowAdd(false); pushNotif(`「${prop.name}」を追加しました`); }}
+          hasKey={hasKey}
+          onOpenSettings={()=>{ setShowAdd(false); setShowSettings(true); }}
+          aiProvider={aiProvider}
+          apiKey={currentKey}
+          model={currentModel}
+        />
       )}
 
       {/* ── AI Settings Sheet ── */}
@@ -848,5 +838,176 @@ function AiTab({ properties, setProperties, pushNotif, hasKey, onOpenSettings, a
         </div>
       )}
     </div>
+  );
+}
+
+// ── AddSheet（URL自動取得 + 手動入力）────────────────────────────────────────
+const EMPTY_PROP = { kind:"new",dev:"mitsubishi",name:"",area:"",line:"",station:"",walk:5,pMin:0,pMax:0,sqm:70,tsubo:"",delivery:"",status:"予告",tags:"",memo:"",lat:"",lng:"" };
+
+const URL_EXTRACT_SYSTEM = `あなたは不動産物件情報の抽出専門AIです。与えられたURLと物件名・テキストから物件情報を抽出し、必ず以下のJSON形式のみで返してください（マークダウン・説明文不要）：
+{"name":"物件名","dev":"mitsubishi/sumitomo/mitsui/nomura/tokyotatemono/tokyu のいずれか（不明はmitsubishi）","kind":"new または used","area":"都道府県市区町村","line":"沿線名","station":"最寄駅名（駅を除く）","walk":徒歩分数数値,"pMin":最低価格万円数値,"pMax":最高価格万円数値,"sqm":専有面積数値,"tsubo":坪単価万円数値orNull,"delivery":"竣工・引渡時期","status":"販売中 or 予告 or 計画中 or 中古売出中","tags":["タグ"],"memo":"特徴や注目点50文字以内","lat":緯度概算数値,"lng":経度概算数値}
+不明な項目は空文字や0にしてください。`;
+
+function AddSheet({ onClose, onAdd, hasKey, onOpenSettings, aiProvider, apiKey, model }) {
+  const [mode, setMode] = useState("url"); // url | manual
+  const [urlInput, setUrlInput] = useState("");
+  const [nameInput, setNameInput] = useState("");
+  const [extracting, setExtracting] = useState(false);
+  const [extractError, setExtractError] = useState("");
+  const [form, setForm] = useState(EMPTY_PROP);
+  const [showForm, setShowForm] = useState(false);
+
+  const setF = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
+
+  const extractFromUrl = async () => {
+    if (!urlInput.trim() && !nameInput.trim()) {
+      setExtractError("URLまたは物件名を入力してください");
+      return;
+    }
+    if (!hasKey) { onOpenSettings(); return; }
+    setExtracting(true);
+    setExtractError("");
+    try {
+      const prompt = `以下の情報から不動産物件の詳細を抽出してください。\nURL: ${urlInput}\n物件名・キーワード: ${nameInput}\n\nURLにアクセスできない場合は、物件名やURLから読み取れる情報（デベロッパー名・エリア・駅名など）だけで可能な範囲で抽出してください。`;
+      const raw = await callAI({ provider: aiProvider, apiKey, model, system: URL_EXTRACT_SYSTEM, prompt });
+      const jsonStr = raw.replace(/```json\s*/g,"").replace(/```\s*/g,"").trim();
+      const parsed = JSON.parse(jsonStr);
+      setForm({
+        kind: parsed.kind || "new",
+        dev: parsed.dev || "mitsubishi",
+        name: parsed.name || nameInput || "",
+        area: parsed.area || "",
+        line: parsed.line || "",
+        station: parsed.station || "",
+        walk: parsed.walk || 5,
+        pMin: parsed.pMin || 0,
+        pMax: parsed.pMax || 0,
+        sqm: parsed.sqm || 70,
+        tsubo: parsed.tsubo || "",
+        delivery: parsed.delivery || "",
+        status: parsed.status || "予告",
+        tags: Array.isArray(parsed.tags) ? parsed.tags.join("、") : (parsed.tags || ""),
+        memo: parsed.memo || "",
+        lat: parsed.lat || "",
+        lng: parsed.lng || "",
+      });
+      setShowForm(true);
+    } catch (e) {
+      setExtractError(`取得に失敗しました。手動入力に切り替えてください。（${e.message}）`);
+      setShowForm(true);
+    }
+    setExtracting(false);
+  };
+
+  const handleAdd = () => {
+    const prop = {
+      ...form,
+      id: Date.now(),
+      walk: +form.walk || 5,
+      pMin: +form.pMin || 0,
+      pMax: +form.pMax || 0,
+      sqm: +form.sqm || 70,
+      tsubo: form.tsubo ? +form.tsubo : null,
+      lat: +form.lat || 35.7,
+      lng: +form.lng || 139.7,
+      tags: typeof form.tags === "string" ? form.tags.split(/[,、]/).map(t=>t.trim()).filter(Boolean) : form.tags,
+      watch: false,
+      notify: false,
+    };
+    onAdd(prop);
+  };
+
+  const FIELDS = [
+    {l:"種別",k:"kind",t:"sel",opts:[{v:"new",l:"新築"},{v:"used",l:"中古"}]},
+    {l:"デベロッパー",k:"dev",t:"sel",opts:DEVS.map(d=>({v:d.id,l:d.short+" "+d.brand}))},
+    {l:"物件名",k:"name",t:"text"},
+    {l:"エリア",k:"area",t:"text"},
+    {l:"路線",k:"line",t:"text"},
+    {l:"駅名",k:"station",t:"text"},
+    {l:"徒歩（分）",k:"walk",t:"number"},
+    {l:"最低価格（万円）",k:"pMin",t:"number"},
+    {l:"最高価格（万円）",k:"pMax",t:"number"},
+    {l:"専有面積（㎡）",k:"sqm",t:"number"},
+    {l:"坪単価（万円・任意）",k:"tsubo",t:"number"},
+    {l:"竣工・引渡",k:"delivery",t:"text"},
+    {l:"ステータス",k:"status",t:"sel",opts:STATUSES.map(s=>({v:s,l:s}))},
+    {l:"タグ（カンマ区切り）",k:"tags",t:"text"},
+    {l:"メモ（任意）",k:"memo",t:"text"},
+  ];
+
+  return (
+    <Sheet onClose={onClose} title="物件を追加">
+      {/* Mode Switch */}
+      <div style={{display:"flex",background:P.card,borderRadius:"10px",padding:"3px",marginBottom:"16px",border:`1px solid ${P.border}`}}>
+        {[["url","🔗 URLから自動取得"],["manual","✏️ 手動で入力"]].map(([m,l])=>(
+          <button key={m} onClick={()=>{ setMode(m); if(m==="manual"){setShowForm(true);setForm(EMPTY_PROP);} else {setShowForm(false);} }}
+            style={{flex:1,padding:"9px",borderRadius:"8px",border:"none",background:mode===m?`linear-gradient(135deg,${P.gold},${P.goldDim})`:"transparent",color:mode===m?"#07080C":P.muted,cursor:"pointer",fontSize:"12px",fontWeight:mode===m?"700":"400",transition:"all .2s"}}>
+            {l}
+          </button>
+        ))}
+      </div>
+
+      {/* URL MODE */}
+      {mode==="url"&&(
+        <div style={{marginBottom:"16px"}}>
+          <div style={{fontSize:"11px",color:P.muted,marginBottom:"10px",lineHeight:"1.7"}}>
+            SUUMOやデベロッパー公式サイトのURLを貼るか、物件名を入力するとAIが情報を自動入力します。
+          </div>
+          <div style={{marginBottom:"8px"}}>
+            <div style={{fontSize:"11px",color:P.muted,marginBottom:"4px"}}>物件ページのURL（任意）</div>
+            <input value={urlInput} onChange={e=>setUrlInput(e.target.value)} placeholder="https://suumo.jp/... または公式サイトURL"
+              style={{width:"100%",background:"#0F1117",border:`1px solid ${P.border2}`,borderRadius:"8px",padding:"9px 11px",color:P.text,fontSize:"13px",outline:"none",boxSizing:"border-box"}}/>
+          </div>
+          <div style={{marginBottom:"12px"}}>
+            <div style={{fontSize:"11px",color:P.muted,marginBottom:"4px"}}>物件名・キーワード（任意）</div>
+            <input value={nameInput} onChange={e=>setNameInput(e.target.value)} placeholder="例：パークタワー浦和、プラウド川越"
+              style={{width:"100%",background:"#0F1117",border:`1px solid ${P.border2}`,borderRadius:"8px",padding:"9px 11px",color:P.text,fontSize:"13px",outline:"none",boxSizing:"border-box"}}/>
+          </div>
+          {!hasKey&&(
+            <div style={{background:"#1A2235",borderRadius:"8px",padding:"10px 12px",marginBottom:"10px",fontSize:"12px",color:P.muted}}>
+              ⚠️ AI自動取得にはAPIキーが必要です。<button onClick={onOpenSettings} style={{background:"none",border:"none",color:P.gold,cursor:"pointer",fontSize:"12px",textDecoration:"underline"}}>⚙ 設定を開く</button>
+            </div>
+          )}
+          {extractError&&<div style={{background:"#F8717118",border:"1px solid #F8717144",borderRadius:"8px",padding:"9px 12px",marginBottom:"10px",fontSize:"12px",color:P.red}}>{extractError}</div>}
+          <button onClick={extractFromUrl} disabled={extracting||(!urlInput.trim()&&!nameInput.trim())}
+            style={{width:"100%",background:extracting||(!urlInput.trim()&&!nameInput.trim())?P.border2:`linear-gradient(135deg,${P.gold},${P.goldDim})`,border:"none",borderRadius:"9px",padding:"12px",color:extracting||(!urlInput.trim()&&!nameInput.trim())?P.muted:"#07080C",cursor:extracting?"not-allowed":"pointer",fontSize:"13px",fontWeight:"700",transition:"all .2s"}}>
+            {extracting?"AIが情報を読み取り中…":"🔍 AIで自動入力する"}
+          </button>
+          {/* URLが取得できない場合の注意 */}
+          <div style={{marginTop:"10px",fontSize:"10px",color:P.muted,lineHeight:"1.6",textAlign:"center"}}>
+            ※ サイトによってはURLのみでは取得できない場合があります。<br/>その場合は物件名も合わせて入力してください。
+          </div>
+        </div>
+      )}
+
+      {/* FORM（自動入力後 or 手動） */}
+      {showForm&&(
+        <div>
+          {mode==="url"&&(
+            <div style={{background:`${P.gold}10`,border:`1px solid ${P.gold}33`,borderRadius:"8px",padding:"9px 12px",marginBottom:"12px",fontSize:"12px",color:P.gold}}>
+              ✓ 情報を取得しました。内容を確認・修正してから追加してください。
+            </div>
+          )}
+          <div style={{display:"grid",gap:"10px",marginBottom:"16px"}}>
+            {FIELDS.map(f=>(
+              <div key={f.k}>
+                <div style={{fontSize:"11px",color:P.muted,marginBottom:"4px"}}>{f.l}</div>
+                {f.t==="sel"
+                  ?<select value={form[f.k]} onChange={e=>setF(f.k,e.target.value)} style={{width:"100%",background:P.card,border:`1px solid ${P.border2}`,borderRadius:"8px",padding:"9px 11px",color:P.text,fontSize:"13px",outline:"none"}}>
+                    {f.opts.map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
+                  </select>
+                  :<input type={f.t} value={form[f.k]} onChange={e=>setF(f.k,e.target.value)}
+                    style={{width:"100%",background:P.card,border:`1px solid ${form[f.k]?P.gold+"33":P.border2}`,borderRadius:"8px",padding:"9px 11px",color:P.text,fontSize:"13px",outline:"none",boxSizing:"border-box"}}/>
+                }
+              </div>
+            ))}
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"8px"}}>
+            <button onClick={onClose} style={{background:P.card,border:`1px solid ${P.border2}`,borderRadius:"10px",padding:"12px",color:P.sub,cursor:"pointer",fontSize:"13px"}}>キャンセル</button>
+            <button onClick={handleAdd} disabled={!form.name} style={{background:form.name?`linear-gradient(135deg,${P.gold},${P.goldDim})`:"#1E2535",border:"none",borderRadius:"10px",padding:"12px",color:form.name?"#07080C":P.muted,cursor:form.name?"pointer":"not-allowed",fontSize:"13px",fontWeight:"700"}}>追加する</button>
+          </div>
+        </div>
+      )}
+    </Sheet>
   );
 }
