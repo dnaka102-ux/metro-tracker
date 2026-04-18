@@ -864,7 +864,7 @@ function parseCSV(text) {
     "緯度": "lat", "経度": "lng", "ウォッチ": "watch",
     // プロジェクトExcel列名
     "ブランド種別": "brand", "所在区市": "area", "住所（番地）": "address",
-    "最寄駅": "station", "竣工年月": "delivery",
+    "竣工年月": "delivery",
     "専有面積_㎡（最小）": "sqm", "専有面積_㎡（最大）": "sqmMax",
     "新築分譲価格帯（参考）_万円": "pRange",
     "現中古相場_万円（参考）": "usedPrice",
