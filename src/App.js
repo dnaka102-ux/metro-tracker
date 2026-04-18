@@ -1246,8 +1246,8 @@ function AddSheet({ onClose, onAdd, onAddMany, hasKey, onOpenSettings, aiProvide
     <Sheet onClose={onClose} title="物件を追加">
       {/* Mode Switch */}
       <div style={{display:"flex",background:P.card,borderRadius:"10px",padding:"3px",marginBottom:"16px",border:`1px solid ${P.border}`}}>
-        {[["url","🔗 URLから自動取得"],["manual","✏️ 手動で入力"]].map(([m,l])=>(
-          <button key={m} onClick={()=>{ setMode(m); if(m==="manual"){setShowForm(true);setForm(EMPTY_PROP);} else {setShowForm(false);} }}
+        {[["url","🔗 URL取得"],["csv","📂 CSV一括"],["manual","✏️ 手動"]].map(([m,l])=>(
+          <button key={m} onClick={()=>switchMode(m)}
             style={{flex:1,padding:"9px",borderRadius:"8px",border:"none",background:mode===m?`linear-gradient(135deg,${P.gold},${P.goldDim})`:"transparent",color:mode===m?"#07080C":P.muted,cursor:"pointer",fontSize:"12px",fontWeight:mode===m?"700":"400",transition:"all .2s"}}>
             {l}
           </button>
@@ -1262,7 +1262,7 @@ function AddSheet({ onClose, onAdd, onAddMany, hasKey, onOpenSettings, aiProvide
           </div>
           <div style={{marginBottom:"8px"}}>
             <div style={{fontSize:"11px",color:P.muted,marginBottom:"4px"}}>物件ページのURL（任意）</div>
-            <input value={urlInput} onChange={e=>setUrlInput(e.target.value)} placeholder="https://suumo.jp/... または公式サイトURL"
+            <input value={urlInput} onChange={e=>setUrlInput(e.target.value)} placeholder="https://suumo.jp/..."
               style={{width:"100%",background:"#0F1117",border:`1px solid ${P.border2}`,borderRadius:"8px",padding:"9px 11px",color:P.text,fontSize:"13px",outline:"none",boxSizing:"border-box"}}/>
           </div>
           <div style={{marginBottom:"12px"}}>
@@ -1270,24 +1270,82 @@ function AddSheet({ onClose, onAdd, onAddMany, hasKey, onOpenSettings, aiProvide
             <input value={nameInput} onChange={e=>setNameInput(e.target.value)} placeholder="例：パークタワー浦和、プラウド川越"
               style={{width:"100%",background:"#0F1117",border:`1px solid ${P.border2}`,borderRadius:"8px",padding:"9px 11px",color:P.text,fontSize:"13px",outline:"none",boxSizing:"border-box"}}/>
           </div>
-          {!hasKey&&(
-            <div style={{background:"#1A2235",borderRadius:"8px",padding:"10px 12px",marginBottom:"10px",fontSize:"12px",color:P.muted}}>
-              ⚠️ AI自動取得にはAPIキーが必要です。<button onClick={onOpenSettings} style={{background:"none",border:"none",color:P.gold,cursor:"pointer",fontSize:"12px",textDecoration:"underline"}}>⚙ 設定を開く</button>
-            </div>
-          )}
+          {!hasKey&&<div style={{background:"#1A2235",borderRadius:"8px",padding:"10px 12px",marginBottom:"10px",fontSize:"12px",color:P.muted}}>⚠️ AI自動取得にはAPIキーが必要です。<button onClick={onOpenSettings} style={{background:"none",border:"none",color:P.gold,cursor:"pointer",fontSize:"12px",textDecoration:"underline"}}>⚙ 設定を開く</button></div>}
           {extractError&&<div style={{background:"#F8717118",border:"1px solid #F8717144",borderRadius:"8px",padding:"9px 12px",marginBottom:"10px",fontSize:"12px",color:P.red}}>{extractError}</div>}
           <button onClick={extractFromUrl} disabled={extracting||(!urlInput.trim()&&!nameInput.trim())}
             style={{width:"100%",background:extracting||(!urlInput.trim()&&!nameInput.trim())?P.border2:`linear-gradient(135deg,${P.gold},${P.goldDim})`,border:"none",borderRadius:"9px",padding:"12px",color:extracting||(!urlInput.trim()&&!nameInput.trim())?P.muted:"#07080C",cursor:extracting?"not-allowed":"pointer",fontSize:"13px",fontWeight:"700",transition:"all .2s"}}>
             {extracting?"AIが情報を読み取り中…":"🔍 AIで自動入力する"}
           </button>
-          {/* URLが取得できない場合の注意 */}
           <div style={{marginTop:"10px",fontSize:"10px",color:P.muted,lineHeight:"1.6",textAlign:"center"}}>
-            ※ サイトによってはURLのみでは取得できない場合があります。<br/>その場合は物件名も合わせて入力してください。
+            ※ サイトによってはURLのみでは取得できない場合があります。物件名も合わせて入力してください。
           </div>
         </div>
       )}
 
-      {/* FORM（自動入力後 or 手動） */}
+      {/* CSV MODE */}
+      {mode==="csv"&&(
+        <div>
+          <div style={{fontSize:"11px",color:P.muted,marginBottom:"12px",lineHeight:"1.7"}}>
+            Excelテンプレートで作成したCSVファイルを選択すると、複数の物件を一括で追加できます。
+          </div>
+          <label style={{display:"block",cursor:"pointer",marginBottom:"12px"}}>
+            <div style={{background:P.card,border:`2px dashed ${P.border2}`,borderRadius:"10px",padding:"20px",textAlign:"center"}}>
+              <div style={{fontSize:"24px",marginBottom:"6px"}}>📂</div>
+              <div style={{fontSize:"13px",color:csvFileName?P.gold:P.sub,fontWeight:csvFileName?"600":"400"}}>
+                {csvFileName||"CSVファイルを選択"}
+              </div>
+              <div style={{fontSize:"10px",color:P.muted,marginTop:"4px"}}>テンプレートをCSV形式で保存したものを使用</div>
+            </div>
+            <input type="file" accept=".csv" onChange={handleFileChange} style={{display:"none"}}/>
+          </label>
+          {csvError&&<div style={{background:"#F8717118",border:"1px solid #F8717144",borderRadius:"8px",padding:"9px 12px",marginBottom:"10px",fontSize:"12px",color:P.red}}>⚠️ {csvError}</div>}
+          {csvRows.length>0&&(
+            <div>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"8px"}}>
+                <div style={{fontSize:"11px",color:P.muted}}>{csvRows.length}件読み込み / {csvChecked.length}件選択中</div>
+                <div style={{display:"flex",gap:"6px"}}>
+                  <button onClick={checkAll} style={{background:"none",border:`1px solid ${P.border2}`,borderRadius:"6px",padding:"4px 9px",color:P.sub,cursor:"pointer",fontSize:"11px"}}>全選択</button>
+                  <button onClick={uncheckAll} style={{background:"none",border:`1px solid ${P.border2}`,borderRadius:"6px",padding:"4px 9px",color:P.sub,cursor:"pointer",fontSize:"11px"}}>全解除</button>
+                </div>
+              </div>
+              <div style={{display:"flex",flexDirection:"column",gap:"6px",maxHeight:"300px",overflowY:"auto",marginBottom:"14px"}}>
+                {csvRows.map((row,i)=>{
+                  const dev=DEVS.find(d=>d.id===row.dev)||DEVS[0];
+                  const checked=csvChecked.includes(i);
+                  const exists=existingNames.includes(row.name);
+                  return (
+                    <div key={i} onClick={()=>!exists&&toggleCheck(i)} style={{background:checked?`${dev.color}18`:P.card,border:`1px solid ${checked?dev.color+"55":P.border2}`,borderRadius:"8px",padding:"10px 12px",cursor:exists?"default":"pointer",opacity:exists?.5:1,position:"relative",transition:"all .15s"}}>
+                      {exists&&<span style={{position:"absolute",top:"8px",right:"8px",fontSize:"9px",color:P.muted,background:P.surface,padding:"1px 5px",borderRadius:"3px"}}>登録済</span>}
+                      <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
+                        <div style={{width:"8px",height:"8px",borderRadius:"50%",background:checked?dev.color:P.border2,flexShrink:0,transition:"background .15s"}}/>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{fontSize:"12px",fontWeight:"600",color:P.text,marginBottom:"2px",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{row.name}</div>
+                          <div style={{fontSize:"10px",color:P.sub}}>{row.station}駅 徒歩{row.walk}分 / {row.kind==="used"?"中古":"新築"} / {row.pMin?row.pMin.toLocaleString()+"万〜":"価格未定"}</div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <button onClick={handleCsvImport} disabled={csvChecked.length===0}
+                style={{width:"100%",background:csvChecked.length>0?`linear-gradient(135deg,${P.gold},${P.goldDim})`:P.border2,border:"none",borderRadius:"10px",padding:"12px",color:csvChecked.length>0?"#07080C":P.muted,cursor:csvChecked.length>0?"pointer":"not-allowed",fontSize:"13px",fontWeight:"700"}}>
+                {csvChecked.length}件を一括追加する
+              </button>
+            </div>
+          )}
+          {csvRows.length===0&&!csvError&&(
+            <div style={{background:"#1A2235",borderRadius:"8px",padding:"12px 14px",fontSize:"11px",color:P.muted,lineHeight:"1.8"}}>
+              <div style={{fontWeight:"600",color:P.sub,marginBottom:"6px"}}>📋 CSVの作り方</div>
+              1. テンプレートのExcelをダウンロード<br/>
+              2. Excelでデータを入力<br/>
+              3. 「名前をつけて保存」→「CSV（コンマ区切り）」を選択<br/>
+              4. 保存したCSVファイルをここで選択
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* FORM（URL自動入力後 or 手動） */}
       {showForm&&(
         <div>
           {mode==="url"&&(
