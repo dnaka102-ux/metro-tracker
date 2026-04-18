@@ -853,22 +853,55 @@ function parseCSV(text) {
   const rawHeader = lines[0].replace(/^\uFEFF/, "");
   const headers = rawHeader.split(",").map(h => h.trim().replace(/^"|"$/g, ""));
 
-  // ヘッダーマッピング（テンプレートの列名 → 内部キー）
+  // ヘッダーマッピング（テンプレート列名 & プロジェクトExcel列名 → 内部キー）
   const MAP = {
+    // テンプレート列名
     "物件名": "name", "種別": "kind", "デベロッパーID": "dev",
     "エリア": "area", "路線": "line", "最寄駅": "station",
     "徒歩分数": "walk", "最低価格_万円": "pMin", "最高価格_万円": "pMax",
     "専有面積_㎡": "sqm", "坪単価_万円": "tsubo", "竣工引渡時期": "delivery",
     "ステータス": "status", "タグ": "tags", "メモ": "memo",
     "緯度": "lat", "経度": "lng", "ウォッチ": "watch",
+    // プロジェクトExcel列名
+    "ブランド種別": "brand", "所在区市": "area", "住所（番地）": "address",
+    "最寄駅": "station", "竣工年月": "delivery",
+    "専有面積_㎡（最小）": "sqm", "専有面積_㎡（最大）": "sqmMax",
+    "新築分譲価格帯（参考）_万円": "pRange",
+    "現中古相場_万円（参考）": "usedPrice",
+    "特徴タグ": "tags", "備考・概要": "memo", "出典": "source",
   };
 
-  const results = [];
-  for (let i = 1; i < lines.length; i++) {
-    const line = lines[i].trim();
-    if (!line) continue;
+  // ブランド名 → デベロッパーID の自動変換
+  const BRAND_TO_DEV = {
+    "parkhouse": "mitsubishi", "パークハウス": "mitsubishi", "三菱": "mitsubishi",
+    "cityhouse": "sumitomo", "citytower": "sumitomo", "シティハウス": "sumitomo", "シティタワー": "sumitomo", "住友": "sumitomo",
+    "parkhomes": "mitsui", "parkcourt": "mitsui", "parktower": "mitsui", "parkmansion": "mitsui",
+    "パークホームズ": "mitsui", "パークコート": "mitsui", "パークタワー": "mitsui", "三井": "mitsui",
+    "proud": "nomura", "プラウド": "nomura", "野村": "nomura",
+    "brillia": "tokyotatemono", "ブリリア": "tokyotatemono", "東京建物": "tokyotatemono", "東建": "tokyotatemono",
+    "branz": "tokyu", "ブランズ": "tokyu", "東急": "tokyu",
+  };
 
-    // CSVのセル分割（ダブルクォート対応）
+  // 価格文字列を数値に変換（例："5000〜8000" → [5000, 8000]）
+  const parsePrice = (str) => {
+    if (!str) return [0, 0];
+    const nums = str.replace(/[^\d〜~－-]/g, " ").trim().split(/[〜~－\-\s]+/).map(n => parseInt(n)).filter(n => !isNaN(n));
+    if (nums.length === 0) return [0, 0];
+    if (nums.length === 1) return [nums[0], nums[0]];
+    return [Math.min(...nums), Math.max(...nums)];
+  };
+
+  // ブランド名からデベロッパーIDを推定
+  const guessDev = (brand, name) => {
+    const target = (brand + " " + name).toLowerCase();
+    for (const [key, id] of Object.entries(BRAND_TO_DEV)) {
+      if (target.includes(key.toLowerCase())) return id;
+    }
+    return "mitsubishi";
+  };
+
+  // セル分割（ダブルクォート対応）
+  const splitCells = (line) => {
     const cells = [];
     let cur = "", inQ = false;
     for (let c = 0; c < line.length; c++) {
@@ -877,6 +910,14 @@ function parseCSV(text) {
       cur += line[c];
     }
     cells.push(cur.trim());
+    return cells;
+  };
+
+  const results = [];
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    const cells = splitCells(line);
 
     const row = {};
     headers.forEach((h, idx) => {
@@ -884,29 +925,49 @@ function parseCSV(text) {
       if (key) row[key] = cells[idx] || "";
     });
 
-    if (!row.name) continue; // 物件名が空ならスキップ
+    if (!row.name) continue;
+
+    // デベロッパーID解決（直接指定 > ブランドから推定）
+    const devId = DEVS.find(d => d.id === row.dev)
+      ? row.dev
+      : guessDev(row.brand || "", row.name);
+
+    // 価格解決（pMin/pMaxが直接あればそれを使用、なければpRangeやusedPriceから解析）
+    let pMin = +row.pMin || 0;
+    let pMax = +row.pMax || 0;
+    if (!pMin && !pMax) {
+      const [a, b] = parsePrice(row.pRange || row.usedPrice || "");
+      pMin = a; pMax = b || a;
+    }
+
+    // 面積解決（最小面積を基本値として使用）
+    const sqm = +row.sqm || 70;
+
+    // 種別解決（ブランド種別列から判定）
+    let kind = "new";
+    if (row.kind === "used") kind = "used";
+    else if (row.brand && (row.brand.includes("中古") || row.usedPrice)) kind = "used";
+
+    // 竣工年月を文字列整形（例："202603" → "2026年3月"）
+    let delivery = row.delivery || "";
+    if (/^\d{6}$/.test(delivery)) {
+      delivery = `${delivery.slice(0,4)}年${parseInt(delivery.slice(4))}月`;
+    }
 
     results.push({
       id: Date.now() + Math.random(),
-      kind: row.kind === "used" ? "used" : "new",
-      dev: DEVS.find(d => d.id === row.dev) ? row.dev : "mitsubishi",
-      name: row.name,
-      area: row.area || "",
-      line: row.line || "",
+      kind, dev: devId, name: row.name,
+      area: row.area || "", line: row.line || "",
       station: row.station || "",
       walk: +row.walk || 5,
-      pMin: +row.pMin || 0,
-      pMax: +row.pMax || 0,
-      sqm: +row.sqm || 70,
+      pMin, pMax, sqm,
       tsubo: row.tsubo ? +row.tsubo : null,
-      delivery: row.delivery || "",
-      status: STATUSES.includes(row.status) ? row.status : "予告",
-      tags: row.tags ? row.tags.split(/[,、]/).map(t => t.trim()).filter(Boolean) : [],
+      delivery,
+      status: STATUSES.includes(row.status) ? row.status : (kind==="used" ? "中古売出中" : "販売中"),
+      tags: row.tags ? row.tags.split(/[,、・]/).map(t=>t.trim()).filter(Boolean) : [],
       memo: row.memo || "",
-      lat: +row.lat || 35.7,
-      lng: +row.lng || 139.7,
-      watch: row.watch === "true",
-      notify: false,
+      lat: +row.lat || 35.7, lng: +row.lng || 139.7,
+      watch: row.watch === "true", notify: false,
     });
   }
   if (results.length === 0) throw new Error("有効なデータが見つかりませんでした");
